@@ -1,0 +1,50 @@
+{
+  "target_pages": [
+    3
+  ],
+  "page_trajectories": [
+    0,
+    7,
+    3
+  ],
+  "scroll_steps": {
+    "0": {
+      "thoughts": "The question asks for the corporation name. On this page, I see \"R. J. Reynolds Tobacco Company\" and \"USA Petroleum\". The document appears to be a contract or agreement, and since R. J. Reynolds Tobacco Company is mentioned more frequently and seems to be the party outlining the requirements, it is likely the corporation in question. However, I want to make sure there isn't a more specific corporation name or any other relevant information on subsequent pages that would clarify the primary corporation involved in this agreement. I'll scroll further to check if other pages contain more mentions of either company or information about the parties involved in the contract.",
+      "note": "R. J. Reynolds Tobacco Company (RJR) is mentioned, indicating it may be the corporation in question. The document also mentions USA Petroleum."
+    },
+    "7": {
+      "thoughts": "Okay, this page seems to be a \"Merchandising Presence Bonus Plan Worksheet\". I see the company name R. J. Reynolds Tobacco Company is listed as the company signing the agreement. It also shows RJR's share of market and the total contracted SOM. The agreement effective date is also on this page. Given the question, 'What is the corporation name?', and the fact that 'R. J. Reynolds Tobacco Company' is listed and signed at the bottom, it's highly likely this is it. However, the previous note mentions that RJR may be the corporation, implying the question is not definitively answered yet. To confirm, I should scroll back to pages that might contain more clarifying details or a different company name. I'll scroll back a few pages to see if there's earlier information that can further clarify which corporation this document refers to. I will scroll back by 4 pages. Since this form is signed by R. J. Reynolds Tobacco Company, it is very likely that this is the correct answer to the question.",
+      "note": "Page 7: This page is a Merchandising Presence Bonus Plan Worksheet. R. J. Reynolds Tobacco Company is listed as the company signing the agreement. USA Petroleum is mentioned as the Account Name. Also, the document refers to \"RJR,\" which could be the corporation name or related to it."
+    }
+  },
+  "answer_steps": {
+    "thoughts": "Okay, I'm on page 3 now. The question is \"What is the corporation name?\".\n\nPrevious notes indicate that RJ Reynolds Tobacco Company (RJR) and USA Petroleum are mentioned in previous pages. This page is a Retail Partners Marketing Plan Contract. Let's see if this page provides the corporation name directly.\n\nScanning the OCR text on the current page, I see a section labeled \"Please use the appropriate line to fill in the name and Taxpayer Identification Number:\". There's a line specifically for \"Corporation Name\", and below it, the text \"USA PETROLEUM\" is written. Also, the Type of Organization is marked as 'Corporation.'\n\nI believe I have enough information to answer the question. The current page explicitly asks for the corporation name, and the filled-in answer is \"USA PETROLEUM\". This confirms information on page 0 where USA Petroleum was mentioned. Also, page 7 mentioned USA Petroleum as the Account Name. This is more definitive than the mentions of RJR in the previous notes because those focused on RJR's role in the document, not as the direct answer to the question of \"What is the corporation name?\"\n",
+    "answer": "USA Petroleum"
+  },
+  "page_ids": [
+    "ffbf0023_p0",
+    "ffbf0023_p1",
+    "ffbf0023_p2",
+    "ffbf0023_p3",
+    "ffbf0023_p4",
+    "ffbf0023_p5",
+    "ffbf0023_p6",
+    "ffbf0023_p7"
+  ],
+  "all_page_ids": [
+    "ffbf0023_p0",
+    "ffbf0023_p1",
+    "ffbf0023_p2",
+    "ffbf0023_p3",
+    "ffbf0023_p4",
+    "ffbf0023_p5",
+    "ffbf0023_p6",
+    "ffbf0023_p7"
+  ],
+  "question": "What is the corporation name?",
+  "answers": [
+    "USA Petroleum",
+    "USA PETROLEUM"
+  ],
+  "answer_page": "ffbf0023_p3"
+}
