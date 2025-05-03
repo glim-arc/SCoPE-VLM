@@ -1,0 +1,112 @@
+{
+  "results": {
+    "m3docvqa_val": {
+      "alias": "m3docvqa_val",
+      "anls,none": 0.5080008743303001,
+      "anls_stderr,none": "N/A",
+      "accuracy,none": 0.4382284382284382,
+      "accuracy_stderr,none": "N/A"
+    }
+  },
+  "group_subtasks": {
+    "m3docvqa_val": []
+  },
+  "configs": {
+    "m3docvqa_val": {
+      "task": "m3docvqa_val",
+      "dataset_path": "json",
+      "dataset_kwargs": {
+        "data_files": "./dataset/M3DocVQA/M3DocVQA_final_singlehop.jsonl"
+      },
+      "test_split": "train",
+      "full_docs": false,
+      "process_results_use_image": false,
+      "doc_to_visual": "<function m3docvqa_doc_to_visual at 0x7f7cb508d6c0>",
+      "doc_to_text": "<function m3docvqa_doc_to_text at 0x7f7cb508dc60>",
+      "doc_to_target": "answer",
+      "process_results": "<function m3docvqa_process_results at 0x7f7cb508e3b0>",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "num_fewshot": 0,
+      "metric_list": [
+        {
+          "metric": "anls",
+          "aggregation": "<function m3docvqa_aggregate_results_anls at 0x7f7cb508ea70>",
+          "higher_is_better": true
+        },
+        {
+          "metric": "accuracy",
+          "aggregation": "<function m3docvqa_aggregate_results_accuracy at 0x7f7cb508f130>",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "max_new_tokens": 32,
+        "temperature": 0.0,
+        "do_sample": false,
+        "until": [
+          "\n\n"
+        ]
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "lmms_eval_specific_kwargs": {
+        "default": {
+          "pre_prompt": "",
+          "post_prompt": "\nAnswer the question using a single word or phrase."
+        },
+        "pre_prompt": "",
+        "post_prompt": "\nAnswer the question using a single word or phrase."
+      }
+    }
+  },
+  "versions": {
+    "m3docvqa_val": "Yaml"
+  },
+  "n-shot": {
+    "m3docvqa_val": 0
+  },
+  "higher_is_better": {
+    "m3docvqa_val": {
+      "anls": true,
+      "accuracy": true
+    }
+  },
+  "n-samples": {
+    "m3docvqa_val": {
+      "original": 858,
+      "effective": 858
+    }
+  },
+  "config": {
+    "model": "qwen2_5_vl",
+    "model_args": "pretrained=Qwen/Qwen2.5-VL-3B-Instruct,max_pixels=12845056,use_flash_attention_2=True,device_map=auto",
+    "batch_size": "1",
+    "batch_sizes": [],
+    "device": null,
+    "use_cache": null,
+    "limit": null,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": "",
+    "random_seed": 0,
+    "numpy_seed": 1234,
+    "torch_seed": 1234,
+    "fewshot_seed": 1234
+  },
+  "git_hash": "819f67e",
+  "date": "20250501_210622",
+  "task_hashes": {},
+  "model_source": "qwen2_5_vl",
+  "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "model_name_sanitized": "Qwen__Qwen2.5-VL-3B-Instruct",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": false,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "start_time": 129591.346236387,
+  "end_time": 132449.063220005,
+  "total_evaluation_time_seconds": "2857.716983617982"
+}
