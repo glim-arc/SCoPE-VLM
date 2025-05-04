@@ -10,7 +10,8 @@ from functools import partial
 
 import numpy as np
 import yaml
-
+import torch
+import pynvml
 warnings.simplefilter("ignore", category=DeprecationWarning)
 
 import hashlib
@@ -243,7 +244,6 @@ def parse_eval_args() -> argparse.Namespace:
         default=False,
         help="Use with --log_samples. Only model outputs will be saved and metrics will not be evaluated.",
     )
-    
     default_seed_string = "0,1234,1234,1234"
     parser.add_argument(
         "--seed",
@@ -363,6 +363,31 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
 
 
 def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
+# VRAM 측정 시작
+    
+    max_total_memory_used = 0
+    if torch.cuda.is_available():
+        # PyTorch 메모리 통계 초기화
+        current_device = torch.cuda.current_device()
+        torch.cuda.reset_peak_memory_stats(device=current_device)
+        start_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
+        print(f"시작 VRAM 사용량 (PyTorch): {start_memory:.2f} GB")
+        
+        # nvidia-smi 메모리 측정 (pynvml)
+        try:
+            pynvml.nvmlInit()
+            device_count = pynvml.nvmlDeviceGetCount()
+            start_total_memory = 0
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                start_total_memory += mem_info.used / 1024**3
+                print(f"GPU {i} 초기 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+            print(f"전체 GPU 초기 사용 메모리 (nvidia-smi): {start_total_memory:.2f} GB")
+            max_total_memory_used = start_total_memory
+        except:
+            print("pynvml 초기화 실패")
+    
     selected_task_list = args.tasks.split(",") if args.tasks else None
 
     if args.include_path is not None:
@@ -469,6 +494,26 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
     request_caching_args = request_caching_arg_to_dict(cache_requests=args.cache_requests)
     datetime_str = utils.get_datetime_str(timezone=args.timezone)
 
+    # 모델 로드 전 VRAM 측정
+    if torch.cuda.is_available():
+        pre_model_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
+        print(f"모델 로드 전 VRAM 사용량 (PyTorch): {pre_model_memory:.2f} GB")
+        
+        # nvidia-smi 메모리 측정
+        try:
+            pre_model_total_memory = 0
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                pre_model_total_memory += mem_info.used / 1024**3
+                print(f"GPU {i} 모델 로드 전 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+            print(f"전체 GPU 모델 로드 전 사용 메모리 (nvidia-smi): {pre_model_total_memory:.2f} GB")
+            if pre_model_total_memory > max_total_memory_used:
+                max_total_memory_used = pre_model_total_memory
+        except:
+            pass
+    
+
     results = evaluator.simple_evaluate(
         model=args.model,
         model_args=args.model_args,
@@ -499,7 +544,61 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
         **request_caching_args,
     )
 
+    # 모델 추론 후 VRAM 측정
+    if torch.cuda.is_available():
+        post_eval_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
+        current_peak_memory = torch.cuda.max_memory_allocated(device=current_device) / 1024**3
+        print(f"추론 후 VRAM 사용량 (PyTorch): {post_eval_memory:.2f} GB")
+        print(f"현재까지 최대 VRAM 사용량 (PyTorch): {current_peak_memory:.2f} GB")
+        
+        # nvidia-smi 메모리 측정
+        try:
+            post_eval_total_memory = 0
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                post_eval_total_memory += mem_info.used / 1024**3
+                print(f"GPU {i} 추론 후 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+            print(f"전체 GPU 추론 후 사용 메모리 (nvidia-smi): {post_eval_total_memory:.2f} GB")
+            if post_eval_total_memory > max_total_memory_used:
+                max_total_memory_used = post_eval_total_memory
+        except:
+            pass
+
     if results is not None:
+        # 최종 VRAM 측정
+        if torch.cuda.is_available():
+            final_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
+            peak_memory = torch.cuda.max_memory_allocated(device=current_device) / 1024**3
+            print(f"\n===== VRAM 사용량 통계 =====")
+            print(f"시작 VRAM (PyTorch): {start_memory:.2f} GB")
+            print(f"최대 VRAM (PyTorch): {peak_memory:.2f} GB")
+            print(f"종료 VRAM (PyTorch): {final_memory:.2f} GB")
+            print(f"증가량 (PyTorch): {peak_memory - start_memory:.2f} GB")
+            
+            # nvidia-smi 최종 메모리 측정
+            try:
+                final_total_memory = 0
+                for i in range(device_count):
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    final_total_memory += mem_info.used / 1024**3
+                    print(f"GPU {i} 최종 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+                print(f"전체 GPU 최종 사용 메모리 (nvidia-smi): {final_total_memory:.2f} GB")
+                print(f"전체 GPU 최대 사용 메모리 (nvidia-smi): {max_total_memory_used:.2f} GB")
+                if final_total_memory > max_total_memory_used:
+                    max_total_memory_used = final_total_memory
+            except:
+                pass
+            print("=============================\n")
+            
+            # 결과에 VRAM 정보 추가
+            if "config" not in results:
+                results["config"] = {}
+            results["config"]["vram_usage"] = {
+                "pytorch_max_vram_GB": peak_memory,
+                "nvidia_smi_max_vram_GB": max_total_memory_used
+            }
         if args.log_samples:
             samples = results.pop("samples")
         else:
