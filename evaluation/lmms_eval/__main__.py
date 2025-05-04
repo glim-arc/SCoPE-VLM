@@ -622,6 +622,7 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
     return None, None
 
 
+
 def print_results(args, results):
     print(f"{args.model} ({args.model_args}),\ngen_kwargs: ({args.gen_kwargs}),\nlimit: {args.limit},\nnum_fewshot: {args.num_fewshot},\nbatch_size: {args.batch_size}")
     print(evaluator.make_table(results))
