@@ -13,13 +13,13 @@ random.seed(42)
 torch.manual_seed(42)
 
 class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
-    def __init__(self, config, max_steps=1):
+    def __init__(self, config, max_steps=99):
         super().__init__(config)
         self.max_steps = max_steps
         self.INIT_SCROLL = -1
         self.map= None
 
-    def CoS_generate(self, processor=None, images=None, question=None, max_new_tokens=1024):
+    def CoS_generate(self, processor=None, images=None, question=None, max_new_tokens=1024, **kwargs):
         assert processor is not None
         assert images is not None
         assert question is not None
@@ -59,7 +59,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
 
             inputs.to(self.device)
 
-            generated_ids = super().generate(**inputs, max_new_tokens=max_new_tokens)
+            generated_ids = super().generate(**inputs, max_new_tokens=max_new_tokens, **kwargs)
 
             generated_ids_trimmed = [
                 out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -71,16 +71,16 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
 
             step_outputs = step_outputs[0]
 
-            print(step_outputs)
-
             step_think = self.extract_string_between(step_outputs, "<think>", "</think>")
             step_note = self.extract_string_between(step_outputs, "<note>", "</note>")
             scroll_num = self.extract_string_between(step_outputs, "<scroll>", "</scroll>")
             answer = self.extract_string_between(step_outputs, "<answer>", "</answer>")
 
+            print(step_outputs)
+
             if answer != "":
                 break
-        
+
         return answer
 
     def extract_string_between(self, text: str, start_string: str, end_string: str) -> Optional[str]:
@@ -105,6 +105,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             next_page = current_page + int(scroll_num)
         except:
             random_flag = True
+            next_page = -1
 
         if next_page < min_page or next_page >= max_page or random_flag:
             unvisited_indices = [i for i, visited in enumerate(reading_history) if not visited]
