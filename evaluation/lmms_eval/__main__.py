@@ -494,20 +494,21 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
     request_caching_args = request_caching_arg_to_dict(cache_requests=args.cache_requests)
     datetime_str = utils.get_datetime_str(timezone=args.timezone)
 
-    # 모델 로드 전 VRAM 측정
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     if torch.cuda.is_available():
         pre_model_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-        print(f"모델 로드 전 VRAM 사용량 (PyTorch): {pre_model_memory:.2f} GB")
+        print(f"VRAM usage before model load (PyTorch): {pre_model_memory:.2f} GB")
         
-        # nvidia-smi 메모리 측정
         try:
             pre_model_total_memory = 0
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                 pre_model_total_memory += mem_info.used / 1024**3
-                print(f"GPU {i} 모델 로드 전 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-            print(f"전체 GPU 모델 로드 전 사용 메모리 (nvidia-smi): {pre_model_total_memory:.2f} GB")
+                print(f"GPU {i} memory usage before model load (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+            print(f"Total GPU memory usage before model load (nvidia-smi): {pre_model_total_memory:.2f} GB")
             if pre_model_total_memory > max_total_memory_used:
                 max_total_memory_used = pre_model_total_memory
         except:
@@ -544,55 +545,54 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
         **request_caching_args,
     )
 
-    # 모델 추론 후 VRAM 측정
+    # Measure VRAM after model inference
     if torch.cuda.is_available():
         post_eval_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
         current_peak_memory = torch.cuda.max_memory_allocated(device=current_device) / 1024**3
-        print(f"추론 후 VRAM 사용량 (PyTorch): {post_eval_memory:.2f} GB")
-        print(f"현재까지 최대 VRAM 사용량 (PyTorch): {current_peak_memory:.2f} GB")
+        print(f"VRAM usage after inference (PyTorch): {post_eval_memory:.2f} GB")
+        print(f"Current peak VRAM usage (PyTorch): {current_peak_memory:.2f} GB")
         
-        # nvidia-smi 메모리 측정
+        # nvidia-smi memory measurement
         try:
             post_eval_total_memory = 0
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                 post_eval_total_memory += mem_info.used / 1024**3
-                print(f"GPU {i} 추론 후 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-            print(f"전체 GPU 추론 후 사용 메모리 (nvidia-smi): {post_eval_total_memory:.2f} GB")
+                print(f"GPU {i} memory usage after inference (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+            print(f"Total GPU memory usage after inference (nvidia-smi): {post_eval_total_memory:.2f} GB")
             if post_eval_total_memory > max_total_memory_used:
                 max_total_memory_used = post_eval_total_memory
         except:
             pass
 
     if results is not None:
-        # 최종 VRAM 측정
+        # Final VRAM measurement
         if torch.cuda.is_available():
             final_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
             peak_memory = torch.cuda.max_memory_allocated(device=current_device) / 1024**3
-            print(f"\n===== VRAM 사용량 통계 =====")
-            print(f"시작 VRAM (PyTorch): {start_memory:.2f} GB")
-            print(f"최대 VRAM (PyTorch): {peak_memory:.2f} GB")
-            print(f"종료 VRAM (PyTorch): {final_memory:.2f} GB")
-            print(f"증가량 (PyTorch): {peak_memory - start_memory:.2f} GB")
+            print(f"\n===== VRAM Usage Statistics =====")
+            print(f"Start VRAM (PyTorch): {start_memory:.2f} GB")
+            print(f"Max VRAM (PyTorch): {peak_memory:.2f} GB")
+            print(f"End VRAM (PyTorch): {final_memory:.2f} GB")
+            print(f"Increase (PyTorch): {peak_memory - start_memory:.2f} GB")
             
-            # nvidia-smi 최종 메모리 측정
+            # nvidia-smi final memory measurement
             try:
                 final_total_memory = 0
                 for i in range(device_count):
                     handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     final_total_memory += mem_info.used / 1024**3
-                    print(f"GPU {i} 최종 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-                print(f"전체 GPU 최종 사용 메모리 (nvidia-smi): {final_total_memory:.2f} GB")
-                print(f"전체 GPU 최대 사용 메모리 (nvidia-smi): {max_total_memory_used:.2f} GB")
+                    print(f"GPU {i} final memory usage (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
+                print(f"Total GPU final memory usage (nvidia-smi): {final_total_memory:.2f} GB")
+                print(f"Total GPU max memory usage (nvidia-smi): {max_total_memory_used:.2f} GB")
                 if final_total_memory > max_total_memory_used:
                     max_total_memory_used = final_total_memory
             except:
                 pass
             print("=============================\n")
             
-            # 결과에 VRAM 정보 추가
             if "config" not in results:
                 results["config"] = {}
             results["config"]["vram_usage"] = {

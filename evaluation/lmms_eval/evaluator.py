@@ -454,6 +454,9 @@ def evaluate(
             for _ in range(padding_requests[reqtype]):
                 cloned_reqs.extend([req] * req.repeats)
 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # run requests through model
         resps = getattr(lm, reqtype)(cloned_reqs)  # Choiszt run generate until
 
