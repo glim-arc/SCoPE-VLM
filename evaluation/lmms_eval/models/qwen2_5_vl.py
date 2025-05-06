@@ -99,6 +99,9 @@ class Qwen2_5_VL(lmms):
         self._max_length = kwargs.get("max_length", 2048)
         self.batch_size_per_gpu = int(batch_size)
         self.use_cache = use_cache
+        self.max_vram_gb = 0.0
+        self._baseline_gpu_mem = None
+        self.device_count = 0
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -168,38 +171,49 @@ class Qwen2_5_VL(lmms):
             for j in i:
                 new_list.append(j)
         return new_list
+    # helper
+    def _current_process_vram(self) -> float:
+        """현재 시점에서 (GPU별 사용량 − baseline)을 합산해 반환."""
+        if not torch.cuda.is_available() or self._device_count == 0:
+            return 0.0
+
+        total = 0.0
+        for i in range(self._device_count):
+            h    = pynvml.nvmlDeviceGetHandleByIndex(i)
+            mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
+            mem  = 0.0 if mem < 1.0 else mem
+            if self._baseline_gpu_mem:
+                mem = max(0.0, mem - self._baseline_gpu_mem[i])
+            total += mem
+        return total
+    
     
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
-        # VRAM 측정 시작
-        max_total_memory_used = 0
+        # ----- (A) initial VRAM measurement ---------------------------------
         if torch.cuda.is_available():
-        # PyTorch 메모리 통계 초기화
-            current_device = torch.cuda.current_device()
-            torch.cuda.reset_peak_memory_stats(device=current_device)
-            start_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-            print(f"시작 VRAM 사용량 (PyTorch): {start_memory:.2f} GB")
-        
-        # nvidia-smi 메모리 측정 (pynvml)
             try:
                 pynvml.nvmlInit()
-                device_count = pynvml.nvmlDeviceGetCount()
-                start_total_memory = 0
-                for i in range(device_count):
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    start_total_memory += mem_info.used / 1024**3
-                    print(f"GPU {i} 초기 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-                print(f"전체 GPU 초기 사용 메모리 (nvidia-smi): {start_total_memory:.2f} GB")
-                max_total_memory_used = start_total_memory
-            except:
-                print("pynvml 초기화 실패")
+                self._device_count = pynvml.nvmlDeviceGetCount()
+                self._baseline_gpu_mem = []
+                for i in range(self._device_count):
+                    h    = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
+                    mem  = 0.0 if mem < 1.0 else mem          # 1 GB 미만 무시
+                    self._baseline_gpu_mem.append(mem)
+                print(f"Baseline GPU usage (nvidia‑smi): {self._baseline_gpu_mem}")
+            except Exception:
+                print("Failed to init NVML for baseline")
+                self._device_count     = 0
+                self._baseline_gpu_mem = None
+
+        
 
         def _collate(x):
-            # the negative sign on len(toks) sorts descending - this has a few advantages:
+            # th negative sign on len(toks) sorts descending - this has a few advantages:
             # - time estimates will always be over not underestimates, which is more useful for planning
             # - to know the size of a batch when going through the list, you know the first one is always the batch
-            #   padded context length. this is useful to simplify the batching logic and more importantly to make
+            #   added context length. this is useful to simplify the batching logic and more importantly to make
             #   automatic adaptive batches much much easier to implement
             # - any OOMs will happen right away rather than near the end
             toks = self.tokenizer.encode(x[0])
@@ -324,24 +338,14 @@ class Qwen2_5_VL(lmms):
 
             pad_token_id = self.tokenizer.pad_token_id
 
-            # 모델 추론 직전 VRAM 측정
+            # ----- (B) pre‑inference VRAM snapshot ------------------------
             if torch.cuda.is_available():
-                pre_inference_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-                print(f"추론 직전 VRAM 사용량 (PyTorch): {pre_inference_memory:.2f} GB")
-        
-        # nvidia-smi 메모리 측정
-                try:
-                    pre_total_memory = 0
-                    for i in range(device_count):
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                        pre_total_memory += mem_info.used / 1024**3
-                        print(f"GPU {i} 추론 직전 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-                    print(f"전체 GPU 추론 직전 사용 메모리 (nvidia-smi): {pre_total_memory:.2f} GB")
-                    if pre_total_memory > max_total_memory_used:
-                        max_total_memory_used = pre_total_memory
-                except:
-                    pass
+                proc_vram = self._current_process_vram()
+                print(f"Process VRAM before inference (nvidia‑smi): {proc_vram:.2f} GB")
+                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
+
+            
+
 
             cont = self.model.generate(
                 **inputs,
@@ -354,26 +358,12 @@ class Qwen2_5_VL(lmms):
                 max_new_tokens=current_gen_kwargs["max_new_tokens"],
                 use_cache=self.use_cache,
             )
-            # 모델 추론 직후 VRAM 측정
+            # ----- (C) post‑inference VRAM snapshot -----------------------
             if torch.cuda.is_available():
-                post_inference_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-                current_peak_memory = torch.cuda.max_memory_allocated(device=current_device) / 1024**3
-                print(f"추론 직후 VRAM 사용량 (PyTorch): {post_inference_memory:.2f} GB")
-                print(f"현재까지 최대 VRAM 사용량 (PyTorch): {current_peak_memory:.2f} GB")
-        
-        # nvidia-smi 메모리 측정
-                try:
-                    post_total_memory = 0
-                    for i in range(device_count):
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                        post_total_memory += mem_info.used / 1024**3
-                        print(f"GPU {i} 추론 직후 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-                    print(f"전체 GPU 추론 직후 사용 메모리 (nvidia-smi): {post_total_memory:.2f} GB")
-                    if post_total_memory > max_total_memory_used:
-                        max_total_memory_used = post_total_memory
-                except:
-                    pass
+                proc_vram = self._current_process_vram()
+                print(f"Process VRAM after  inference (nvidia‑smi): {proc_vram:.2f} GB")
+                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
+
 
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
@@ -392,31 +382,15 @@ class Qwen2_5_VL(lmms):
             # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)
 
-        # VRAM 측정 종료
+        # ----- (D) final VRAM summary ---------------------------------
         if torch.cuda.is_available():
-            final_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-            peak_memory = torch.cuda.max_memory_allocated(device=current_device) / 1024**3
-            print(f"\n===== VRAM 사용량 통계 =====")
-            print(f"시작 VRAM (PyTorch): {start_memory:.2f} GB")
-            print(f"최대 VRAM (PyTorch): {peak_memory:.2f} GB")
-            print(f"종료 VRAM (PyTorch): {final_memory:.2f} GB")
-            print(f"증가량 (PyTorch): {peak_memory - start_memory:.2f} GB")
-        
-            # nvidia-smi 최종 메모리 측정
-            try:
-                final_total_memory = 0
-                for i in range(device_count):
-                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    final_total_memory += mem_info.used / 1024**3
-                    print(f"GPU {i} 최종 사용 메모리 (nvidia-smi): {mem_info.used/1024**3:.2f} GB")
-                print(f"전체 GPU 최종 사용 메모리 (nvidia-smi): {final_total_memory:.2f} GB")
-                print(f"전체 GPU 최대 사용 메모리 (nvidia-smi): {max_total_memory_used:.2f} GB")
-                if final_total_memory > max_total_memory_used:
-                    max_total_memory_used = final_total_memory
-            except:
-                pass
-            print("=============================\n")
+            proc_vram = self._current_process_vram()
+            self.max_vram_gb = max(self.max_vram_gb, proc_vram)
+            print("\n===== VRAM Usage Summary (nvidia‑smi) =====")
+            print(f"Current process VRAM : {proc_vram:.2f} GB")
+            print(f"Peak    process VRAM : {self.max_vram_gb:.2f} GB")
+            print("===========================================\n")
+
 
         pbar.close()
         return res

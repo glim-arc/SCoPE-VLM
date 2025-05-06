@@ -2,7 +2,7 @@ import base64
 import re
 from io import BytesIO
 from typing import List, Optional, Tuple, Union
-
+import pynvml
 import decord
 import numpy as np
 import torch
@@ -34,7 +34,7 @@ from pathlib import Path
 
 inference_dir = Path(__file__).resolve().parent.parent.parent.parent / "inference"
 sys.path.insert(0, str(inference_dir))
-from modeling_SCoPE_vlm import SCoPEVLMForConditionalGeneration
+from inference.modeling_SCoPE_vlm import SCoPEVLMForConditionalGeneration
 
 @register_model("scope_vlm")
 class SCoPE_VLM(lmms):
@@ -108,6 +108,9 @@ class SCoPE_VLM(lmms):
         self._max_length = kwargs.get("max_length", 2048)
         self.batch_size_per_gpu = int(batch_size)
         self.use_cache = use_cache
+        self.max_vram_gb = 0.0
+        self._baseline_gpu_mem = None
+        self.device_count = 0
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -177,9 +180,40 @@ class SCoPE_VLM(lmms):
             for j in i:
                 new_list.append(j)
         return new_list
+    
+    # helper
+    def _current_process_vram(self) -> float:
+        """현재 시점에서 (GPU별 사용량 − baseline)을 합산해 반환."""
+        if not torch.cuda.is_available() or self._device_count == 0:
+            return 0.0
+
+        total = 0.0
+        for i in range(self._device_count):
+            h    = pynvml.nvmlDeviceGetHandleByIndex(i)
+            mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
+            mem  = 0.0 if mem < 1.0 else mem
+            if self._baseline_gpu_mem:
+                mem = max(0.0, mem - self._baseline_gpu_mem[i])
+            total += mem
+        return total
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
+        if torch.cuda.is_available():
+            try:
+                pynvml.nvmlInit()
+                self._device_count = pynvml.nvmlDeviceGetCount()
+                self._baseline_gpu_mem = []
+                for i in range(self._device_count):
+                    h    = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
+                    mem  = 0.0 if mem < 1.0 else mem          # 1 GB 미만 무시
+                    self._baseline_gpu_mem.append(mem)
+                print(f"Baseline GPU usage (nvidia‑smi): {self._baseline_gpu_mem}")
+            except Exception:
+                print("Failed to init NVML for baseline")
+                self._device_count     = 0
+                self._baseline_gpu_mem = None
 
         def _collate(x):
             # the negative sign on len(toks) sorts descending - this has a few advantages:
@@ -306,9 +340,18 @@ class SCoPE_VLM(lmms):
             if "max_new_tokens" in current_gen_kwargs and current_gen_kwargs["max_new_tokens"] < 1024:
                 current_gen_kwargs["max_new_tokens"] = 1024
 
-            answers = [self.model.CoS_generate(processor=self.processor, images=image_inputs, question=question, use_cache=self.use_cache, **current_gen_kwargs)]
+            if torch.cuda.is_available():
+                proc_vram = self._current_process_vram()
+                print(f"Process VRAM before inference (nvidia‑smi): {proc_vram:.2f} GB")
+                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
 
+            answers = [self.model.CoS_generate(processor=self.processor, images=image_inputs, question=question, use_cache=self.use_cache, **current_gen_kwargs)]
             print(answers)
+
+            if torch.cuda.is_available():
+                proc_vram = self._current_process_vram()
+                print(f"Process VRAM after  inference (nvidia‑smi): {proc_vram:.2f} GB")
+                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
 
             for i, ans in enumerate(answers):
                 for term in until:
@@ -322,6 +365,14 @@ class SCoPE_VLM(lmms):
                 pbar.update(1)
             # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)
+
+        if torch.cuda.is_available():
+            proc_vram = self._current_process_vram()
+            self.max_vram_gb = max(self.max_vram_gb, proc_vram)
+            print("\n===== VRAM Usage Summary (nvidia‑smi) =====")
+            print(f"Current process VRAM : {proc_vram:.2f} GB")
+            print(f"Peak    process VRAM : {self.max_vram_gb:.2f} GB")
+            print("===========================================\n")
 
         pbar.close()
         return res
