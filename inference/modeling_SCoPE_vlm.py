@@ -31,7 +31,9 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         current_page = 0
         reading_history = [False] * len(images)
 
-        for _ in range(self.max_steps):
+        max_steps = min(self.max_steps, len(images))
+
+        for _ in range(max_steps):
             cur_prompt, image, notes, current_page, reading_history = self.transition_function(question, images, current_page, scroll_num, notes, step_note, reading_history)
             
             messages = [
@@ -107,7 +109,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             random_flag = True
             next_page = -1
 
-        if next_page < min_page or next_page >= max_page or random_flag:
+        if next_page < min_page or next_page >= max_page or random_flag or reading_history[next_page]:
             unvisited_indices = [i for i, visited in enumerate(reading_history) if not visited]
             if unvisited_indices:
                 next_page = random.choice(unvisited_indices)
