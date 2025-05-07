@@ -270,18 +270,13 @@ def simple_evaluate(
             model_name = type(model).__name__
 
         # add info about the model and few shot config
-        results["config"] = {
-            "model": model_name,
-            "model_args": model_args,
-        }
-        # add more detailed model info if available TODO: add model info
-        # if isinstance(lm, lm_eval.models.huggingface.HFLM):
-        #     results["config"].update(lm.get_model_info())
-        # add info about execution
-        results["config"].update(
+        config_block = results.setdefault("config", {})
+        config_block.update(
             {
+                "model": model_name,
+                "model_args": model_args,
                 "batch_size": batch_size,
-                "batch_sizes": (list(lm.batch_sizes.values()) if hasattr(lm, "batch_sizes") else []),
+                "batch_sizes": list(lm.batch_sizes.values()) if hasattr(lm, "batch_sizes") else [],
                 "device": device,
                 "use_cache": use_cache,
                 "limit": limit,
@@ -369,6 +364,8 @@ def evaluate(
     task_group_alias = collections.defaultdict(dict)
     # store num-fewshot value per task
     num_fewshot = collections.defaultdict(int)
+    overall_pages = 0
+    overall_questions = 0
 
     # get lists of group hierarchy and each type of request
     eval_tasks = get_task_list(task_dict)
@@ -440,7 +437,7 @@ def evaluate(
             numpad = max(gathered_item) - gathered_item[lm.rank]
             # todo: may not account for padding in cases like SquadV2 which has multiple req types
             padding_requests[reqtype] += numpad
-
+    
     ### Run LMM on inputs, get all outputs ###
     # execute each type of request
     for reqtype, reqs in requests.items():
@@ -456,16 +453,32 @@ def evaluate(
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
+        
         # run requests through model
-        resps = getattr(lm, reqtype)(cloned_reqs)  # Choiszt run generate until
+        if reqtype == "generate_until":
+            
+            out = lm.generate_until(cloned_reqs)
+            
+            if isinstance(out, tuple) and len(out) == 3:
+                answers, pages_sum, qcount = out
+            else:
+                answers      = out
+                pages_sum    = 0
+                qcount       = 0
+            overall_pages     += pages_sum
+            overall_questions += qcount
+            resps = answers
+        else:
+         
+            resps = getattr(lm, reqtype)(cloned_reqs)
 
-        # put responses from model into a list of length K for each request.
         for x, req in zip(resps, cloned_reqs):
             req.resps.append(x)
 
         if lm.world_size > 1:
             lm.accelerator.wait_for_everyone()
+
+    
 
     RANK = lm.rank
     WORLD_SIZE = lm.world_size
@@ -617,6 +630,10 @@ def evaluate(
                             _higher_is_better[m] = None
                 higher_is_better[group] = _higher_is_better
 
+        avg_pages_per_question = overall_pages / overall_questions if overall_questions else 0.0
+        print(f"Average pages per question: {avg_pages_per_question:.2f}")
+
+
         results_dict = {
             "results": dict(results_agg.items()),
             **({"groups": dict(group_agg.items())} if (bool(group_agg) & show_group_table) else {}),
@@ -636,6 +653,7 @@ def evaluate(
                 for task_output in eval_tasks
             },
         }
+        results_dict.setdefault("config", {})["avg_pages_per_question"] = avg_pages_per_question
         if log_samples:
             results_dict["samples"] = dict(samples)
     else:
@@ -643,7 +661,7 @@ def evaluate(
 
     if hasattr(lm, "accelerator"):
         lm.accelerator.wait_for_everyone()
-
+    
     return results_dict
 
 

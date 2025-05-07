@@ -99,9 +99,6 @@ class Qwen2_5_VL(lmms):
         self._max_length = kwargs.get("max_length", 2048)
         self.batch_size_per_gpu = int(batch_size)
         self.use_cache = use_cache
-        self.max_vram_gb = 0.0
-        self._baseline_gpu_mem = None
-        self.device_count = 0
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -171,43 +168,10 @@ class Qwen2_5_VL(lmms):
             for j in i:
                 new_list.append(j)
         return new_list
-    # helper
-    def _current_process_vram(self) -> float:
-        """현재 시점에서 (GPU별 사용량 − baseline)을 합산해 반환."""
-        if not torch.cuda.is_available() or self._device_count == 0:
-            return 0.0
 
-        total = 0.0
-        for i in range(self._device_count):
-            h    = pynvml.nvmlDeviceGetHandleByIndex(i)
-            mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
-            mem  = 0.0 if mem < 1.0 else mem
-            if self._baseline_gpu_mem:
-                mem = max(0.0, mem - self._baseline_gpu_mem[i])
-            total += mem
-        return total
-    
     
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
-        # ----- (A) initial VRAM measurement ---------------------------------
-        if torch.cuda.is_available():
-            try:
-                pynvml.nvmlInit()
-                self._device_count = pynvml.nvmlDeviceGetCount()
-                self._baseline_gpu_mem = []
-                for i in range(self._device_count):
-                    h    = pynvml.nvmlDeviceGetHandleByIndex(i)
-                    mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
-                    mem  = 0.0 if mem < 1.0 else mem          # 1 GB 미만 무시
-                    self._baseline_gpu_mem.append(mem)
-                print(f"Baseline GPU usage (nvidia‑smi): {self._baseline_gpu_mem}")
-            except Exception:
-                print("Failed to init NVML for baseline")
-                self._device_count     = 0
-                self._baseline_gpu_mem = None
-
-        
 
         def _collate(x):
             # th negative sign on len(toks) sorts descending - this has a few advantages:
@@ -338,14 +302,6 @@ class Qwen2_5_VL(lmms):
 
             pad_token_id = self.tokenizer.pad_token_id
 
-            # ----- (B) pre‑inference VRAM snapshot ------------------------
-            if torch.cuda.is_available():
-                proc_vram = self._current_process_vram()
-                print(f"Process VRAM before inference (nvidia‑smi): {proc_vram:.2f} GB")
-                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
-
-            
-
 
             cont = self.model.generate(
                 **inputs,
@@ -358,13 +314,6 @@ class Qwen2_5_VL(lmms):
                 max_new_tokens=current_gen_kwargs["max_new_tokens"],
                 use_cache=self.use_cache,
             )
-            # ----- (C) post‑inference VRAM snapshot -----------------------
-            if torch.cuda.is_available():
-                proc_vram = self._current_process_vram()
-                print(f"Process VRAM after  inference (nvidia‑smi): {proc_vram:.2f} GB")
-                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
-
-
 
             generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, cont)]
             answers = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
@@ -382,14 +331,6 @@ class Qwen2_5_VL(lmms):
             # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)
 
-        # ----- (D) final VRAM summary ---------------------------------
-        if torch.cuda.is_available():
-            proc_vram = self._current_process_vram()
-            self.max_vram_gb = max(self.max_vram_gb, proc_vram)
-            print("\n===== VRAM Usage Summary (nvidia‑smi) =====")
-            print(f"Current process VRAM : {proc_vram:.2f} GB")
-            print(f"Peak    process VRAM : {self.max_vram_gb:.2f} GB")
-            print("===========================================\n")
 
 
         pbar.close()

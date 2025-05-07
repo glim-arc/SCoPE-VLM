@@ -108,9 +108,7 @@ class SCoPE_VLM(lmms):
         self._max_length = kwargs.get("max_length", 2048)
         self.batch_size_per_gpu = int(batch_size)
         self.use_cache = use_cache
-        self.max_vram_gb = 0.0
-        self._baseline_gpu_mem = None
-        self.device_count = 0
+    
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -181,40 +179,11 @@ class SCoPE_VLM(lmms):
                 new_list.append(j)
         return new_list
     
-    # helper
-    def _current_process_vram(self) -> float:
-        """현재 시점에서 (GPU별 사용량 − baseline)을 합산해 반환."""
-        if not torch.cuda.is_available() or self._device_count == 0:
-            return 0.0
 
-        total = 0.0
-        for i in range(self._device_count):
-            h    = pynvml.nvmlDeviceGetHandleByIndex(i)
-            mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
-            mem  = 0.0 if mem < 1.0 else mem
-            if self._baseline_gpu_mem:
-                mem = max(0.0, mem - self._baseline_gpu_mem[i])
-            total += mem
-        return total
 
-    def generate_until(self, requests: List[Instance]) -> List[str]:
+    def generate_until(self, requests: List[Instance]) -> Union[List[str], Tuple[List[str], int, int]]:
         res = []
-        if torch.cuda.is_available():
-            try:
-                pynvml.nvmlInit()
-                self._device_count = pynvml.nvmlDeviceGetCount()
-                self._baseline_gpu_mem = []
-                for i in range(self._device_count):
-                    h    = pynvml.nvmlDeviceGetHandleByIndex(i)
-                    mem  = pynvml.nvmlDeviceGetMemoryInfo(h).used / 1024**3
-                    mem  = 0.0 if mem < 1.0 else mem          # 1 GB 미만 무시
-                    self._baseline_gpu_mem.append(mem)
-                print(f"Baseline GPU usage (nvidia‑smi): {self._baseline_gpu_mem}")
-            except Exception:
-                print("Failed to init NVML for baseline")
-                self._device_count     = 0
-                self._baseline_gpu_mem = None
-
+        total_pages = 0
         def _collate(x):
             # the negative sign on len(toks) sorts descending - this has a few advantages:
             # - time estimates will always be over not underestimates, which is more useful for planning
@@ -236,6 +205,8 @@ class SCoPE_VLM(lmms):
         question = ""
 
         # assert len(chunks) == 1, "Only batch size 1 is supported in SCoPE_VLM.generate_until"
+        total_pages = 0
+        num_questions = 0
 
         for chunk in chunks:
             contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
@@ -340,18 +311,15 @@ class SCoPE_VLM(lmms):
             if "max_new_tokens" in current_gen_kwargs and current_gen_kwargs["max_new_tokens"] < 1024:
                 current_gen_kwargs["max_new_tokens"] = 1024
 
-            if torch.cuda.is_available():
-                proc_vram = self._current_process_vram()
-                print(f"Process VRAM before inference (nvidia‑smi): {proc_vram:.2f} GB")
-                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
+          
 
-            answers = [self.model.CoS_generate(processor=self.processor, images=image_inputs, question=question, use_cache=self.use_cache, **current_gen_kwargs)]
+            ans, pages_visited = self.model.CoS_generate(processor=self.processor, images=image_inputs, question=question, use_cache=self.use_cache,return_pages = True, **current_gen_kwargs)
+            answers = [ans]
             print(answers)
+            total_pages += pages_visited
+            
 
-            if torch.cuda.is_available():
-                proc_vram = self._current_process_vram()
-                print(f"Process VRAM after  inference (nvidia‑smi): {proc_vram:.2f} GB")
-                self.max_vram_gb = max(self.max_vram_gb, proc_vram)
+
 
             for i, ans in enumerate(answers):
                 for term in until:
@@ -366,16 +334,8 @@ class SCoPE_VLM(lmms):
             # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)
 
-        if torch.cuda.is_available():
-            proc_vram = self._current_process_vram()
-            self.max_vram_gb = max(self.max_vram_gb, proc_vram)
-            print("\n===== VRAM Usage Summary (nvidia‑smi) =====")
-            print(f"Current process VRAM : {proc_vram:.2f} GB")
-            print(f"Peak    process VRAM : {self.max_vram_gb:.2f} GB")
-            print("===========================================\n")
-
         pbar.close()
-        return res
+        return res, total_pages, len(requests)
 
     def generate_until_multi_round(self, requests) -> List[str]:
         raise NotImplementedError("TODO: Implement multi-round generation")

@@ -19,7 +19,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         self.INIT_SCROLL = -1
         self.map= None
 
-    def CoS_generate(self, processor=None, images=None, question=None, max_new_tokens=1024, **kwargs):
+    def CoS_generate(self, processor=None, images=None, question=None, max_new_tokens=1024,return_pages = False, **kwargs):
         assert processor is not None
         assert images is not None
         assert question is not None
@@ -32,6 +32,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         reading_history = [False] * len(images)
 
         max_steps = min(self.max_steps, len(images))
+
 
         for _ in range(max_steps):
             cur_prompt, image, notes, current_page, reading_history = self.transition_function(question, images, current_page, scroll_num, notes, step_note, reading_history)
@@ -83,6 +84,10 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             if answer != "":
                 break
 
+        pages_visited = sum(reading_history)
+        
+        if return_pages:
+            return answer, pages_visited         # <- 두 값 반환
         return answer
 
     def extract_string_between(self, text: str, start_string: str, end_string: str) -> Optional[str]:

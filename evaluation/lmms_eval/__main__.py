@@ -11,7 +11,6 @@ from functools import partial
 import numpy as np
 import yaml
 import torch
-import pynvml
 warnings.simplefilter("ignore", category=DeprecationWarning)
 
 import hashlib
@@ -32,13 +31,10 @@ from lmms_eval.utils import (
     make_table,
     simple_parse_args_string,
 )
-THRESHOLD_GB = 1.0   # 1 GB 미만은 무시
+from lmms_eval.monitor_gpu import gpu_monitor
+import multiprocessing as mp
+import re, json
 
-def get_gpu_mem_used_gb(handle, threshold=THRESHOLD_GB):
-    """NVML handle에서 사용 VRAM(GB)을 얻되, threshold 미만이면 0 반환."""
-    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    used_gb   = mem_info.used / 1024**3
-    return used_gb if used_gb >= threshold else 0.0
 
 def _int_or_none_list_arg_type(min_len: int, max_len: int, defaults: str, value: str, split_char: str = ","):
     def parse_value(item):
@@ -369,28 +365,17 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
 
 
 def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
-# VRAM 측정 시작
-    
-    max_total_memory_used = 0
-    if torch.cuda.is_available():
-        current_device = torch.cuda.current_device()
-        torch.cuda.reset_peak_memory_stats(device=current_device)
-        start_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-        print(f"Start VRAM (PyTorch): {start_memory:.2f} GB")
 
-        try:
-            pynvml.nvmlInit()
-            device_count = pynvml.nvmlDeviceGetCount()
-            start_total_memory = 0
-            for i in range(device_count):
-                handle  = pynvml.nvmlDeviceGetHandleByIndex(i)
-                used_gb = get_gpu_mem_used_gb(handle)      # < 1 GB → 0
-                start_total_memory += used_gb
-                print(f"GPU {i} initial memory (nvidia‑smi): {used_gb:.2f} GB")
-            print(f"Total initial GPU memory (nvidia‑smi): {start_total_memory:.2f} GB")
-            max_total_memory_used = start_total_memory
-        except Exception:
-            print("Failed to initialize pynvml")
+     # ── (1) device_map 모드 판별 → sum or max ────────────────────
+    dm_match = re.search(r"device_map=([^,]+)", args.model_args)
+    mode = "sum" if dm_match and dm_match.group(1).lower() == "auto" else "max"
+
+    # ── (2) GPU 모니터 프로세스 시작 ──────────────────────────────
+    manager = mp.Manager()
+    shared  = manager.dict(run=True, peak=0.0)
+    mon = mp.Process(target=gpu_monitor, args=(shared, 0.5, mode))
+    mon.start()
+    
     
     selected_task_list = args.tasks.split(",") if args.tasks else None
 
@@ -501,24 +486,6 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # --- ② VRAM before model load -------------------------------
-    if torch.cuda.is_available():
-        pre_model_memory = torch.cuda.memory_allocated(device=current_device) / 1024**3
-        print(f"VRAM before model load (PyTorch): {pre_model_memory:.2f} GB")
-
-        try:
-            pre_model_total_memory = 0
-            for i in range(device_count):
-                handle  = pynvml.nvmlDeviceGetHandleByIndex(i)
-                used_gb = get_gpu_mem_used_gb(handle)
-                pre_model_total_memory += used_gb
-                print(f"GPU {i} before model load (nvidia‑smi): {used_gb:.2f} GB")
-            print(f"Total GPU memory before model load (nvidia‑smi): {pre_model_total_memory:.2f} GB")
-            max_total_memory_used = max(max_total_memory_used, pre_model_total_memory)
-        except Exception:
-            pass
-    
-
     results = evaluator.simple_evaluate(
         model=args.model,
         model_args=args.model_args,
@@ -549,64 +516,51 @@ def cli_evaluate_single(args: Union[argparse.Namespace, None] = None) -> None:
         **request_caching_args,
     )
 
-    # --- ③ VRAM after inference --------------------------------
-    if torch.cuda.is_available():
-        post_eval_total_memory = 0.0
-        for i in range(device_count):
-            handle  = pynvml.nvmlDeviceGetHandleByIndex(i)
-            used_gb = get_gpu_mem_used_gb(handle)
-            post_eval_total_memory += used_gb
-            print(f"GPU {i} after inference (nvidia‑smi): {used_gb:.2f} GB")
-
-        print(f"Total GPU memory after inference (nvidia‑smi): {post_eval_total_memory:.2f} GB")
-        max_total_memory_used = max(max_total_memory_used, post_eval_total_memory)
-
 
     if results is not None and torch.cuda.is_available():
 
-        # (1) 프로그램 종료 직전 VRAM 합계
-        final_total_memory = 0.0
-        for i in range(device_count):
-            handle  = pynvml.nvmlDeviceGetHandleByIndex(i)
-            used_gb = get_gpu_mem_used_gb(handle)
-            final_total_memory += used_gb
-            print(f"GPU {i} final memory (nvidia‑smi): {used_gb:.2f} GB")
-
-        print(f"Total GPU final memory (nvidia‑smi): {final_total_memory:.2f} GB")
-        max_total_memory_used = max(max_total_memory_used, final_total_memory)
-
-        # (2) generate_until() 누적 피크 값과 비교
-        gen_until_peak = getattr(getattr(evaluator, "model", None), "max_vram_gb", 0.0)
-        overall_peak_vram = max(max_total_memory_used, gen_until_peak)
+        # (1) 모니터 프로세스 종료 & 최대값 확보
+        shared["run"] = False   # 0.5 s 샘플러 루프 종료 신호
+        mon.join()              # 프로세스 합류
+        monitor_peak = shared.get("peak", 0.0)   # 연속 샘플링 피크
 
         print("\n===== VRAM Usage Summary (nvidia‑smi) =====")
-        print(f"Peak process VRAM during generate_until : {gen_until_peak:.2f} GB")
-        print(f"Peak process VRAM after main inference  : {max_total_memory_used:.2f} GB")
-        print(f"→ Overall peak VRAM                     : {overall_peak_vram:.2f} GB")
+        print(f"Peak VRAM from background monitor : {monitor_peak:.2f} GB")
         print("============================================\n")
 
-        # (3) 결과 dict 기록
-        if "config" not in results:
-            results["config"] = {}
-        results["config"]["vram_usage"] = {  
-            "nvidia_smi_max_vram_GB": overall_peak_vram,
-        }
+        # (2) 결과 dict 기록
+        config_block = results.setdefault("config", {})
 
+        # ② VRAM 정보만 추가
+        config_block["vram_usage"] = {
+            "nvidia_smi_max_vram_GB": monitor_peak,
+        }
+        
+
+        # (3) 이후 로깅·저장 로직은 기존 코드 그대로 유지
         if args.log_samples:
             samples = results.pop("samples")
         else:
             samples = None
+
         dumped = json.dumps(results, indent=4, default=_handle_non_serializable)
         if args.show_config:
             print(dumped)
 
         batch_sizes = ",".join(map(str, results["config"]["batch_sizes"]))
 
-        evaluation_tracker.save_results_aggregated(results=results, samples=samples if args.log_samples else None, datetime_str=datetime_str)
+        evaluation_tracker.save_results_aggregated(
+            results=results,
+            samples=samples if args.log_samples else None,
+            datetime_str=datetime_str
+        )
 
         if args.log_samples:
-            for task_name, config in results["configs"].items():
-                evaluation_tracker.save_results_samples(task_name=task_name, samples=samples[task_name])
+            for task_name, _ in results["configs"].items():
+                evaluation_tracker.save_results_samples(
+                    task_name=task_name,
+                    samples=samples[task_name]
+                )
 
         if evaluation_tracker.push_results_to_hub or evaluation_tracker.push_samples_to_hub:
             evaluation_tracker.recreate_metadata_card()
