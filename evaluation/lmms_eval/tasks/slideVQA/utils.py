@@ -70,18 +70,23 @@ class Evaluator:
         self.get_edit_distance = levenshtein_distance
         self.anls_threshold = 0.5
 
-    def get_metrics(self, gt_answers, preds):
-        batch_accuracy = []
-        batch_anls = []
-        for batch_idx in range(len(preds)):
-            # float 타입 처리 추가
-            if isinstance(gt_answers[batch_idx], (int, float)):
-                gt = [self._preprocess_str(str(gt_answers[batch_idx]))]
-            else:
-                gt = [self._preprocess_str(gt_elm) for gt_elm in gt_answers[batch_idx]]
-        
-            pred = self._preprocess_str(preds[batch_idx])
+    def _ensure_list(self, obj):
+        if isinstance(obj, (list, tuple, set)):
+            return obj
+        return [obj]
 
+
+    def get_metrics(self, gt_answers, preds):
+        batch_accuracy, batch_anls = [], []
+
+        for gt_raw, pred_raw in zip(gt_answers, preds):
+            # 1. 정답을 리스트형으로 통일
+            gt_list = self._ensure_list(gt_raw)
+            # 2. 문자열 전처리
+            gt   = [self._preprocess_str(g) for g in gt_list]
+            pred = self._preprocess_str(pred_raw)
+
+            # 3. 메트릭 계산
             batch_accuracy.append(self._calculate_accuracy(gt, pred))
             batch_anls.append(self._calculate_anls(gt, pred))
 
@@ -89,6 +94,10 @@ class Evaluator:
 
 
     def _preprocess_str(self, string):
+        if string is None:
+            string = ""
+
+        string = str(string)
         if not self.case_sensitive:
             string = string.lower()
 
