@@ -364,7 +364,7 @@ def evaluate(
     task_group_alias = collections.defaultdict(dict)
     # store num-fewshot value per task
     num_fewshot = collections.defaultdict(int)
-    overall_pages = 0
+    overall_pages_ratio = 0.0
     overall_questions = 0
 
     # get lists of group hierarchy and each type of request
@@ -460,18 +460,18 @@ def evaluate(
             out = lm.generate_until(cloned_reqs)
             
             if isinstance(out, tuple) and len(out) == 3:
-                answers, pages_sum, qcount = out
+                answers, pages_ratio_sum, qcount = out   # return of gen_until -> res, total_pages_ratio, len(requests)
             else:
-                answers      = out
-                pages_sum    = 0
+                answers      = out # return of gen_until -> res
+                pages_ratio_sum    = 0
                 qcount       = 0
-            overall_pages     += pages_sum
+            overall_pages_ratio     += pages_ratio_sum
             overall_questions += qcount
             resps = answers
         else:
          
             resps = getattr(lm, reqtype)(cloned_reqs)
-
+        
         for x, req in zip(resps, cloned_reqs):
             req.resps.append(x)
 
@@ -630,8 +630,8 @@ def evaluate(
                             _higher_is_better[m] = None
                 higher_is_better[group] = _higher_is_better
 
-        avg_pages_per_question = overall_pages / overall_questions if overall_questions else 0.0
-        print(f"Average pages per question: {avg_pages_per_question:.2f}")
+        avg_pages_ratio_per_question = overall_pages_ratio / overall_questions if overall_questions else 0.0
+        print(f"Average pages ratio per question: {avg_pages_ratio_per_question:.2f}")
 
 
         results_dict = {
@@ -653,7 +653,7 @@ def evaluate(
                 for task_output in eval_tasks
             },
         }
-        results_dict.setdefault("config", {})["avg_pages_per_question"] = avg_pages_per_question
+        results_dict.setdefault("config", {})["avg_pages_ratio_per_question"] = avg_pages_ratio_per_question
         if log_samples:
             results_dict["samples"] = dict(samples)
     else:

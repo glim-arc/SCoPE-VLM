@@ -205,7 +205,7 @@ class SCoPE_VLM(lmms):
         question = ""
 
         # assert len(chunks) == 1, "Only batch size 1 is supported in SCoPE_VLM.generate_until"
-        total_pages = 0
+        total_pages_ratio = 0.0
         num_questions = 0
 
         for chunk in chunks:
@@ -316,10 +316,9 @@ class SCoPE_VLM(lmms):
             ans, pages_visited = self.model.CoS_generate(processor=self.processor, images=image_inputs, question=question, use_cache=self.use_cache,return_pages = True, **current_gen_kwargs)
             answers = [ans]
             print(answers)
-            total_pages += pages_visited
-            
-
-
+            total_pages_ratio += (pages_visited / len(image_inputs))
+             
+        
 
             for i, ans in enumerate(answers):
                 for term in until:
@@ -335,7 +334,7 @@ class SCoPE_VLM(lmms):
         res = re_ords.get_original(res)
 
         pbar.close()
-        return res, total_pages, len(requests)
+        return res, total_pages_ratio, len(res) # 해당 반복에서 만든 정답의 개수 == 질문의 개수
 
     def generate_until_multi_round(self, requests) -> List[str]:
         raise NotImplementedError("TODO: Implement multi-round generation")
