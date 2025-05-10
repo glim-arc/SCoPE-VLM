@@ -79,11 +79,10 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             scroll_num = self.extract_string_between(step_outputs, "<scroll>", "</scroll>")
             answer = self.extract_string_between(step_outputs, "<answer>", "</answer>")
 
-            print(step_outputs)
-
             if answer != "":
                 break
 
+        print(step_outputs)
         pages_visited = sum(reading_history)
         
         if return_pages:
@@ -99,10 +98,6 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             return ""
 
     def transition_function(self, question, images, current_page, scroll_num, notes, step_note, reading_history):
-
-        if current_page != 0:
-            notes
-
         min_page = 0
         max_page = len(images)
 

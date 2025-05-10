@@ -34,6 +34,8 @@ from pathlib import Path
 
 inference_dir = Path(__file__).resolve().parent.parent.parent.parent / "inference"
 sys.path.insert(0, str(inference_dir))
+inference_dir = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(inference_dir))
 from inference.modeling_SCoPE_vlm import SCoPEVLMForConditionalGeneration
 
 @register_model("scope_vlm")
@@ -182,6 +184,7 @@ class SCoPE_VLM(lmms):
 
 
     def generate_until(self, requests: List[Instance]) -> Union[List[str], Tuple[List[str], int, int]]:
+        torch.cuda.empty_cache()
         res = []
         total_pages = 0
         def _collate(x):
@@ -300,16 +303,16 @@ class SCoPE_VLM(lmms):
 
             # Set default generation kwargs
             default_gen_kwargs = {
-                "max_new_tokens": 1024,
-                "temperature": 0.9,  # Set to 0 for greedy default
-                "top_p": 0.9,
+                "max_new_tokens": 4096,
+                "temperature": 0,  # Set to 0 for greedy default
+                "top_p": None,
                 "num_beams": 1,
             }
             # Update with provided kwargs
             current_gen_kwargs = {**default_gen_kwargs, **gen_kwargs}
 
-            if "max_new_tokens" in current_gen_kwargs and current_gen_kwargs["max_new_tokens"] < 1024:
-                current_gen_kwargs["max_new_tokens"] = 1024
+            if "max_new_tokens" in current_gen_kwargs and current_gen_kwargs["max_new_tokens"] < 4096:
+                current_gen_kwargs["max_new_tokens"] = 4096
 
           
 

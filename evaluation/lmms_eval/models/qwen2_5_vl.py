@@ -171,6 +171,7 @@ class Qwen2_5_VL(lmms):
 
     
     def generate_until(self, requests: List[Instance]) -> List[str]:
+        torch.cuda.empty_cache()
         res = []
 
         def _collate(x):
