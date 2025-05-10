@@ -49,6 +49,8 @@ AVAILABLE_MODELS = {
     "qwen2_5_omni": "Qwen2_5_Omni",
     "qwen2_5_vl": "Qwen2_5_VL",
     "scope_vlm": "SCoPE_VLM",
+    "scope_vlm_cos_serial": "SCoPE_VLM",
+    "scope_vlm_cos_random": "SCoPE_VLM",
     "qwen2_5_vl_interleave": "Qwen2_5_VL_Interleave",
     "qwen2_audio": "Qwen2_Audio",
     "qwen2_vl": "Qwen2_VL",
