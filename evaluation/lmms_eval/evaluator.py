@@ -365,6 +365,7 @@ def evaluate(
     # store num-fewshot value per task
     num_fewshot = collections.defaultdict(int)
     overall_pages_ratio = 0.0
+    overall_success_ratio = 0.0
     overall_questions = 0
 
     # get lists of group hierarchy and each type of request
@@ -459,14 +460,16 @@ def evaluate(
             
             out = lm.generate_until(cloned_reqs)
             
-            if isinstance(out, tuple) and len(out) == 3:
-                answers, pages_ratio_sum, qcount = out   # return of gen_until -> res, total_pages_ratio, len(requests)
+            if isinstance(out, tuple) and len(out) == 4:
+                answers, pages_ratio_sum, qcount, success_ratio_sum = out   # return of gen_until -> res, total_pages_ratio, len(requests)
             else:
                 answers      = out # return of gen_until -> res
                 pages_ratio_sum    = 0
                 qcount       = 0
+                success_ratio_sum = 0
             overall_pages_ratio     += pages_ratio_sum
             overall_questions += qcount
+            overall_success_ratio += success_ratio_sum
             resps = answers
         else:
          
@@ -631,7 +634,10 @@ def evaluate(
                 higher_is_better[group] = _higher_is_better
 
         avg_pages_ratio_per_question = overall_pages_ratio / overall_questions if overall_questions else 0.0
+        avg_success_ratio_per_question = overall_success_ratio / overall_questions if overall_questions else 0.0
+
         print(f"Average pages ratio per question: {avg_pages_ratio_per_question:.2f}")
+        print(f"Average success ratio per question: {avg_success_ratio_per_question:.2f}")
 
 
         results_dict = {
@@ -654,6 +660,7 @@ def evaluate(
             },
         }
         results_dict.setdefault("config", {})["avg_pages_ratio_per_question"] = avg_pages_ratio_per_question
+        results_dict.setdefault("config", {})["avg_success_ratio_per_question"] = avg_success_ratio_per_question
         if log_samples:
             results_dict["samples"] = dict(samples)
     else:

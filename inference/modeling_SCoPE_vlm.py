@@ -30,12 +30,14 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         step_note = ""
         current_page = 0
         reading_history = [False] * len(images)
-
+        
         max_steps = min(self.max_steps, len(images))
+        success_count = 0
+        
 
 
         for _ in range(max_steps):
-            cur_prompt, image, notes, current_page, reading_history = self.transition_function(question, images, current_page, scroll_num, notes, step_note, reading_history)
+            cur_prompt, image, notes, current_page, reading_history, success_count = self.transition_function(question, images, current_page, scroll_num, notes, step_note, reading_history, success_count)
             
             messages = [
                 {
@@ -86,7 +88,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         pages_visited = sum(reading_history)
         
         if return_pages:
-            return answer, pages_visited         # <- 두 값 반환
+            return answer, pages_visited, success_count         # <- 두 값 반환
         return answer
 
     def extract_string_between(self, text: str, start_string: str, end_string: str) -> Optional[str]:
@@ -97,7 +99,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         except ValueError:
             return ""
 
-    def transition_function(self, question, images, current_page, scroll_num, notes, step_note, reading_history):
+    def transition_function(self, question, images, current_page, scroll_num, notes, step_note, reading_history, success_count):
         min_page = 0
         max_page = len(images)
 
@@ -109,7 +111,13 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             random_flag = True
             next_page = -1
 
-        if next_page < min_page or next_page >= max_page or random_flag or reading_history[next_page]:
+        scroll_success = not (next_page < min_page or next_page >= max_page or random_flag or (next_page >= 0 and reading_history[next_page]))
+
+    
+        if scroll_success:
+            success_count += 1
+
+        if not scroll_success:
             unvisited_indices = [i for i, visited in enumerate(reading_history) if not visited]
             if unvisited_indices:
                 next_page = random.choice(unvisited_indices)
@@ -133,7 +141,7 @@ class SCoPEVLMForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
             cur_prompt = cur_prompt.replace("[Previous_Note]", notes)
             cur_prompt = cur_prompt.replace("[Total_page_num]", str(max_page))
         
-        return cur_prompt, image, notes, next_page, reading_history
+        return cur_prompt, image, notes, next_page, reading_history, success_count
 
 if __name__ == "__main__":
     device_num = 1
